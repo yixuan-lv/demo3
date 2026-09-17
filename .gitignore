@@ -1,0 +1,22 @@
+# 大文件 / 中间产物
+exp/
+output/
+bc2gm1/
+.idea/
+*.log
+*.bak
+*.safetensors
+*.bin
+*.pt
+
+# 数据（从官方下载）
+data/*.json
+
+# 缓存
+__pycache__/
+*.pyc
+.cache/
+.ipynb_checkpoints/
+
+# 系统
+.DS_Store
