@@ -9,9 +9,10 @@ from src.metrics import evaluate
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--pred", type=Path, required=True)
-parser.add_argument("--gold", type=Path, required=True)
+parser.add_argument("--gold", type=Path, default=ROOT / "data" / "bc2gm_test.json")
 args = parser.parse_args()
 
-result = evaluate(args.pred, args.gold, count_duplicates=True)
-print(f"TP={result['tp']}, FP={result['fp']}, FN={result['fn']}")
-print(f"P={result['precision']:.4f}, R={result['recall']:.4f}, F1={result['f1']:.4f}")
+result = evaluate(args.pred, args.gold)
+print(f"Precision: {result['precision']:.4f}")
+print(f"Recall:    {result['recall']:.4f}")
+print(f"F1:        {result['f1']:.4f}")

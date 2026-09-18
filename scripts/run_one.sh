@@ -1,13 +1,14 @@
 #!/bin/bash
 NAME=$1; RANK=$2; LR=$3; QBIT=$4; QMETHOD=$5
 
-EXP_ROOT=/root/demo3/exp
+PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+EXP_ROOT=$PROJECT_ROOT/exp
 YAML=$EXP_ROOT/yaml/${NAME}.yaml
-OUTDIR=/root/autodl-tmp/demo3/exp/${NAME}
+OUTDIR=${OUTPUT_ROOT:-/root/autodl-tmp/demo3}/exp/${NAME}
 PREDDIR=$EXP_ROOT/predict/${NAME}
 LOGDIR=$EXP_ROOT/logs
-RES=$EXP_ROOT/results/results.csv
-GOLD=/root/demo3/data/bc2gm_test.json
+RES=$PROJECT_ROOT/results/results.csv
+GOLD=$PROJECT_ROOT/data/bc2gm_test.json
 RUNNAME=exp_${NAME}
 
 mkdir -p $OUTDIR $PREDDIR $LOGDIR
@@ -19,14 +20,14 @@ fi
 
 echo "===== [$(date '+%F %T')] 开始 $NAME ====="
 
-bash $EXP_ROOT/gen_yaml.sh $NAME $RANK $LR $QBIT $QMETHOD $OUTDIR $RUNNAME
+bash "$PROJECT_ROOT/scripts/gen_yaml.sh" $NAME $RANK $LR $QBIT $QMETHOD $OUTDIR $RUNNAME
 
-cd /root/LLaMA-Factory
+cd "${LLAMA_FACTORY_ROOT:-/root/LLaMA-Factory}"
 echo "--- 训练 $NAME ---"
 llamafactory-cli train $YAML 2>&1 | tee $LOGDIR/${NAME}_train.log
 
 cat > $LOGDIR/${NAME}_predict.yaml << YEOF
-model_name_or_path: /root/models/Qwen2.5-7B-Instruct
+model_name_or_path: ${MODEL_PATH:-/root/models/Qwen2.5-7B-Instruct}
 adapter_name_or_path: ${OUTDIR}
 template: qwen
 finetuning_type: lora
@@ -45,6 +46,6 @@ echo "--- 推理 $NAME ---"
 llamafactory-cli train $LOGDIR/${NAME}_predict.yaml 2>&1 | tee $LOGDIR/${NAME}_predict.log
 
 echo "--- 评测 $NAME ---"
-METRIC=$(python $EXP_ROOT/eval_one.py ${PREDDIR}/generated_predictions.jsonl $GOLD)
+METRIC=$(python "$PROJECT_ROOT/scripts/eval_one.py" ${PREDDIR}/generated_predictions.jsonl $GOLD)
 echo "${NAME},${RANK},${LR},${QBIT},${METRIC}" >> $RES
 echo "===== $NAME 完成: P,R,F1 = $METRIC ====="

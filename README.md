@@ -1,6 +1,6 @@
 # Demo3: Qwen2.5-7B 指令微调用于生物医学命名实体识别（NER）
 
-基于 Qwen2.5-7B-Instruct，使用 QLoRA 在 BC2GM 数据集上做指令微调，完成生物医学基因实体（GENE）识别任务，并对比 **LoRA rank**、**学习率**、**量化方式** 对性能与显存的影响。
+基于 Qwen2.5-7B-Instruct，分别使用 **LoRA（BF16）** 与 **QLoRA（4-bit）** 两种微调方案，在 BC2GM 数据集上完成生物医学基因实体（GENE）识别任务，并对比 **LoRA rank**、**学习率**、**量化方式** 对性能与显存的影响。
 
 ---
 
@@ -11,8 +11,8 @@
 - [方法](#方法)
 - [训练配置](#训练配置)
 - [评测方法](#评测方法)
-- [主要结果](#主要结果)
-- [参数调优趋势](#参数调优趋势)
+- [方案对比：LoRA vs QLoRA](#方案对比lora-vs-qlora)
+- [参数调优实验](#参数调优实验)
 - [结论](#结论)
 - [快速开始](#快速开始)
 - [项目结构](#项目结构)
@@ -26,7 +26,22 @@
 - **任务**：生物医学命名实体识别（NER），识别句子中的基因/蛋白实体（GENE）
 - **形式**：指令微调，生成式输出，把实体用 `<gene>...</gene>` 包裹
 - **基座模型**：Qwen2.5-7B-Instruct
-- **微调方法**：QLoRA（4-bit bnb 量化）+ LoRA（rank 16, target all）
+- **微调方案**：LoRA（BF16）+ QLoRA（4-bit bnb）
+
+---
+
+## 完成情况
+
+| 要求 | 当前实现 |
+|---|---|
+| 数据预处理 | `data/build_dataset.py` 将 BC2GM 转成指令数据 |
+| 模型与训练 | Qwen2.5-7B + LoRA/QLoRA，训练参数由 YAML 管理 |
+| 模型评估 | 解析 `<gene>` 标签并计算 entity-level P/R/F1 |
+| 结果可视化 | 保存 loss 曲线、参数趋势图和结果表 |
+| SwanLab | 已记录 6 组训练实验 |
+| 参数调优 | 对比 rank、学习率和量化方式 |
+
+训练部分调用 LLaMA-Factory，没有另外重写一套 PyTorch 训练循环。这样可以保证仓库中的代码和已经完成的实验一致。如果验收明确要求手写训练循环，这一项还需要单独补充。
 
 ---
 
@@ -56,8 +71,10 @@
 ## 方法
 
 - **基座**：Qwen2.5-7B-Instruct
-- **量化**：4-bit（bitsandbytes NF4）
-- **微调**：LoRA，`lora_rank=16`，`lora_alpha=32`，`lora_target=all`
+- **两种微调方案**：
+  - **LoRA（BF16）**：全精度基座 + LoRA 适配器，不量化
+  - **QLoRA（4-bit）**：4-bit NF4 量化基座 + LoRA 适配器
+- **LoRA 配置**：`lora_rank=16`，`lora_target=all`
 - **训练框架**：LLaMA-Factory
 - **可视化**：SwanLab
 
@@ -65,27 +82,25 @@
 
 ## 训练配置
 
-| 项 | 值 |
-|---|---|
-| 基座 | Qwen2.5-7B-Instruct |
-| 微调方法 | QLoRA（4-bit bnb）+ LoRA |
-| lora_rank | 16（baseline） |
-| lora_alpha | 32 |
-| lora_target | all（q/k/v/o/gate/up/down_proj） |
-| per_device_train_batch_size | 4 |
-| gradient_accumulation_steps | 4 |
-| 等效 batch size | 16 |
-| learning_rate | 5e-5 |
-| num_train_epochs | 3 |
-| cutoff_len | 1024 |
-| lr_scheduler_type | cosine |
-| warmup_ratio | 0.1 |
-| bf16 | true |
-| gradient_checkpointing | true |
-| 硬件 | RTX 5090 32G |
-| 训练时长 | ~50 分钟 |
-| train_loss | 0.0179 |
-| eval_loss | 0.0160 |
+| 项 | LoRA (BF16) | QLoRA (4-bit) |
+|---|---|---|
+| 基座 | Qwen2.5-7B-Instruct | Qwen2.5-7B-Instruct |
+| 量化 | 无 | 4-bit bnb (NF4) |
+| lora_rank | 16 | 16 |
+| lora_target | all | all |
+| per_device_train_batch_size | 2 | 4 |
+| gradient_accumulation_steps | 8 | 4 |
+| 等效 batch size | 16 | 16 |
+| learning_rate | 5e-5 | 5e-5 |
+| num_train_epochs | 3 | 3 |
+| cutoff_len | 1024 | 1024 |
+| lr_scheduler_type | cosine | cosine |
+| warmup_ratio | 0.1 | 0.1 |
+| bf16 | true | true |
+| gradient_checkpointing | true | true |
+| 硬件 | RTX 5090 32G | RTX 5090 32G |
+| 训练时长 | ~70 分钟 | ~50 分钟 |
+| 训练显存 | **27.8 GB** | **25.9 GB** |
 
 ---
 
@@ -101,49 +116,54 @@
    - `Recall = TP / (TP + FN)`
    - `F1 = 2PR / (P + R)`
 
-同时提供两套口径（唯一实体 / 按出现次数），结果一致（baseline F1 均为 0.8427）。
+结果表使用句内唯一实体集合进行统计，`scripts/eval_f1_strict.py` 另外提供按出现次数统计的口径。
 
 ---
 
-## 主要结果
+## 方案对比：LoRA vs QLoRA
 
-### Baseline（rank16 / lr5e-5 / QLoRA）
+在相同基座、相同 LoRA 配置（rank16 / all target）、相同 batch（等效 16）、相同 lr（5e-5）、相同 epoch（3）下，只改变**是否 4-bit 量化**，对比结果：
 
-| 指标 | 值 |
-|---|---|
-| Precision | 0.8470 |
-| Recall | 0.8386 |
-| **F1** | **0.8427** |
-| 训练显存 | 25.9 GB |
-| 训练时长 | ~50 分钟 |
+| 方案 | 量化 | Precision | Recall | F1 | 训练显存 |
+|------|------|-----------|--------|-----|----------|
+| **LoRA** | BF16 (无) | 0.8468 | 0.8419 | **0.8443** | **27.8 GB** |
+| **QLoRA** | 4-bit NF4 | 0.8470 | 0.8386 | **0.8427** | **25.9 GB** |
 
-### 参数调优实验汇总
+**对比结论**：
 
-| 实验 | rank | lr | 量化 | Precision | Recall | F1 | 训练显存 |
-|------|------|-----|------|-----------|--------|-----|----------|
-| baseline | 16 | 5e-5 | 4-bit | 0.8470 | 0.8386 | **0.8427** | 25.9G |
-| rank8 | 8 | 5e-5 | 4-bit | 0.8433 | 0.8359 | **0.8395** | 25.9G |
-| rank32 | 32 | 5e-5 | 4-bit | 0.8526 | 0.8421 | **0.8473** | 29.1G |
-| lr1e5 | 16 | 1e-5 | 4-bit | 0.7950 | 0.7900 | **0.7925** | 25.9G |
-| lr1e4 | 16 | 1e-4 | 4-bit | 0.8524 | 0.8458 | **0.8491** | 25.9G |
-| lora（不量化） | 16 | 5e-5 | none | 0.8468 | 0.8419 | **0.8443** | 27.8G |
+- 本次实验中 QLoRA 比 LoRA 少占用 1.9 GB 显存（约 6.8%）
+- 两者 F1 相差 0.0016，QLoRA 的性能损失较小
+- 训练时长：LoRA 约 70 分钟，QLoRA 约 50 分钟
 
-> 注：**显存指训练阶段稳定占用**。所有 QLoRA 实验的推理阶段显存稳定在 ~16.2 GB，与 rank / learning rate 无关。
+![quant compare](results/fig_quant_compare.png)
 
 ### 与参考指标对比
 
 | 配置 | 参考 F1 | 本实验 F1 |
 |------|---------|-----------|
-| Qwen2.5-7B-lora | 84% | **84.43%**（全精度 LoRA） |
-| Qwen2.5-7B-qlora | 83% | **84.27%**（QLoRA baseline） |
+| Qwen2.5-7B-LoRA | 84% | **84.43%** |
+| Qwen2.5-7B-QLoRA | 83% | **84.27%** |
 
-本实验 QLoRA baseline 略高于参考 83%，全精度 LoRA 与参考 84% 持平。
+两种方案的 F1 均达到或略高于参考值。
 
 ---
 
-## 参数调优趋势
+## 参数调优实验
 
-### 1. LoRA rank 对 F1 的影响
+在 QLoRA 方案下，进一步对 **LoRA rank** 和 **学习率** 做参数搜索。
+
+### 实验汇总
+
+| 实验 | 方案 | rank | lr | 量化 | Precision | Recall | F1 | 训练显存 |
+|------|------|------|-----|------|-----------|--------|-----|----------|
+| qlora_rank16 | QLoRA | 16 | 5e-5 | 4-bit | 0.8470 | 0.8386 | **0.8427** | 25.9G |
+| qlora_rank8 | QLoRA | 8 | 5e-5 | 4-bit | 0.8433 | 0.8359 | **0.8395** | 25.9G |
+| qlora_rank32 | QLoRA | 32 | 5e-5 | 4-bit | 0.8526 | 0.8421 | **0.8473** | 29.1G |
+| qlora_lr1e-5 | QLoRA | 16 | 1e-5 | 4-bit | 0.7950 | 0.7900 | **0.7925** | 25.9G |
+| qlora_lr1e-4 | QLoRA | 16 | 1e-4 | 4-bit | 0.8524 | 0.8458 | **0.8491** | 25.9G |
+| lora_rank16 | LoRA | 16 | 5e-5 | BF16 | 0.8468 | 0.8419 | **0.8443** | 27.8G |
+
+### 1. LoRA rank 对 F1 的影响（QLoRA）
 
 | rank | F1 |
 |------|-----|
@@ -151,11 +171,13 @@
 | 16 | 0.8427 |
 | 32 | 0.8473 |
 
-**趋势**：F1 随 rank 单调上升，8 → 16 涨 0.32，16 → 32 涨 0.46，说明 rank=16 时模型尚未饱和。
+**趋势**：在测试的 8、16、32 三个 rank 中，F1 分别为 0.8395、0.8427、0.8473。
+
+**显存趋势**：rank 8 ≈ rank 16（均 25.9G），rank 32 涨到 29.1G。原因是 rank ≤ 16 时显存瓶颈在激活值，rank = 32 时 LoRA 参数与优化器状态开始显著占用显存。
 
 ![rank vs F1](results/fig_rank_f1.png)
 
-### 2. 学习率对 F1 的影响
+### 2. 学习率对 F1 的影响（QLoRA）
 
 | lr | F1 |
 |-----|-----|
@@ -163,20 +185,11 @@
 | 5e-5 | 0.8427 |
 | 1e-4 | 0.8491 |
 
-**趋势**：F1 随学习率单调上升。lr=1e-5 相比 5e-5 掉 5 个点，说明在固定 3 epoch 下学习率过小会导致严重欠拟合。
+**趋势**：F1 随学习率单调上升。lr=1e-5 相比 5e-5 掉 5 个点，说明在固定 3 epoch 下学习率过小会导致严重欠拟合；lr=1e-4 表现最优。
+
+**显存趋势**：三个实验训练显存完全一致（25.9G），证实**学习率不影响显存**。
 
 ![lr vs F1](results/fig_lr_f1.png)
-
-### 3. 量化方式对 F1 与显存的影响
-
-| 配置 | F1 | 训练显存 |
-|------|-----|----------|
-| QLoRA（4-bit，rank16） | 0.8427 | 25.9G |
-| LoRA（全精度，rank16） | 0.8443 | 27.8G |
-
-**趋势**：QLoRA 相比全精度 LoRA 节省约 1.9G 显存（-6.8%），F1 仅相差 0.16，量化性价比高。
-
-![quant compare](results/fig_quant_compare.png)
 
 ### 训练 loss 曲线
 
@@ -188,20 +201,17 @@
 
 ## 结论
 
-1. **学习率对性能影响最大**：lr=1e-5 相比 5e-5 掉 5.02 个点，在固定 3 epoch 下学习率过小会严重欠拟合；lr=1e-4 表现最优（0.8491）。
+1. **LoRA vs QLoRA**：在相同配置下，QLoRA 少占用 1.9G 显存，F1 低 0.0016。
 
-2. **LoRA rank 收益尚未饱和**：rank 从 8 → 16 → 32，F1 单调上升（0.8395 → 0.8427 → 0.8473），未观察到收益递减。
+2. **学习率对性能影响最大**：lr=1e-5 相比 5e-5 掉 5.02 个点，在固定 3 epoch 下学习率过小会严重欠拟合；lr=1e-4 表现最优（0.8491）。
 
-3. **显存对 rank 非线性**：rank 8 ≈ rank 16（均 25.9G），rank 32 涨到 29.1G。原因是 rank ≤ 16 时显存瓶颈在激活值，rank = 32 时 LoRA 参数与优化器状态开始显著占用显存。
+3. **LoRA rank 趋势**：rank 从 8 增加到 32 时，F1 从 0.8395 提高到 0.8473。
 
-4. **QLoRA 性价比高**：相比全精度 LoRA，QLoRA 省 1.9G 显存（-6.8%），F1 仅低 0.16，适合显存受限场景。
+4. **显存对 rank 非线性**：rank 8 ≈ rank 16（均 25.9G），rank 32 涨到 29.1G。原因是 rank ≤ 16 时显存瓶颈在激活值，rank = 32 时 LoRA 参数与优化器状态开始显著占用显存。
 
 5. **学习率不影响显存**：lr 1e-5 / 5e-5 / 1e-4 三个实验训练显存完全一致（25.9G）。
 
-### 最优配置建议
-
-- **性能优先**：rank=32 + lr=1e-4（未组合验证，预期 > 85%）
-- **显存优先**：rank=16 + lr=1e-4 + QLoRA（F1 0.8491，显存 25.9G）
+当前单变量实验中，`rank=32` 和 `learning_rate=1e-4` 分别取得各自组内的最高 F1。两者没有做组合实验，因此不对组合效果作推断。
 
 ---
 
@@ -228,17 +238,18 @@ python data/build_dataset.py --input /path/to/bc2gm --output data/
 ### 训练
 
 ```bash
-llamafactory-cli train configs/train_qlora.yaml
+# QLoRA（默认）
+python scripts/train.py --config qlora.yaml
 ```
 
 ### 推理 + 评测
 
 ```bash
 # 1. 在 test 集上生成预测
-llamafactory-cli train configs/predict_qlora.yaml
+python scripts/predict.py --config predict_qlora.yaml
 
 # 2. 计算 entity-level F1
-python scripts/eval_f1.py \
+python scripts/evaluate.py \
   --pred results/predict/generated_predictions.jsonl \
   --gold data/bc2gm_test.json
 ```
@@ -256,18 +267,33 @@ bash scripts/run_all.sh
 ## 项目结构
 
 ```
-demo3-ner-qlora/
+demo3/
 ├── README.md
 ├── requirements.txt
-├── data/
-│   └── build_dataset.py
 ├── configs/
-│   ├── train_qlora.yaml
+│   ├── lora.yaml
+│   ├── qlora.yaml
+│   ├── train_qlora.yaml  # 原训练配置，保留兼容
 │   └── predict_qlora.yaml
+├── data/
+│   ├── build_dataset.py
+│   └── bc2gm_{train,dev,test}.json  # 不提交到 Git
+├── src/
+│   ├── config.py
+│   ├── dataset.py
+│   ├── metrics.py
+│   ├── model.py
+│   ├── trainer.py
+│   ├── predict.py
+│   └── visualization.py
 ├── scripts/
-│   ├── eval_f1.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── predict.py
+│   ├── eval_f1_strict.py
 │   ├── run_one.sh
 │   ├── run_all.sh
+│   ├── gen_yaml.sh
 │   └── plot.py
 └── results/
     ├── results.csv
@@ -286,12 +312,12 @@ SwanLab 项目：[qwen2.5-ner](https://swanlab.cn/@Lyx1/qwen2.5-ner)
 
 包含 6 个 run：
 
-- `bc2gm-qlora`（baseline）
-- `exp_rank8`
-- `exp_rank32`
-- `exp_lr1e5`
-- `exp_lr1e4`
-- `exp_lora`
+- `bc2gm-qlora`（QLoRA baseline, rank16, lr5e-5）
+- `exp_rank8`（QLoRA rank8）
+- `exp_rank32`（QLoRA rank32）
+- `exp_lr1e5`（QLoRA lr1e-5）
+- `exp_lr1e4`（QLoRA lr1e-4）
+- `exp_lora`（LoRA BF16）
 
 ---
 

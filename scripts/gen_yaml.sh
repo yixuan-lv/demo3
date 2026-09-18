@@ -1,8 +1,10 @@
 #!/bin/bash
 NAME=$1; RANK=$2; LR=$3; QBIT=$4; QMETHOD=$5; OUTDIR=$6; RUNNAME=$7
-YAML=/root/demo3/exp/yaml/${NAME}.yaml
+PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+YAML=$PROJECT_ROOT/exp/yaml/${NAME}.yaml
 
-cp /root/demo3/train_qlora.yaml $YAML
+mkdir -p "$PROJECT_ROOT/exp/yaml"
+cp "$PROJECT_ROOT/configs/qlora.yaml" "$YAML"
 
 sed -i "s|^lora_rank:.*|lora_rank: ${RANK}|" $YAML
 sed -i "s|^learning_rate:.*|learning_rate: ${LR}|" $YAML
@@ -20,4 +22,4 @@ else
 fi
 
 echo "[gen_yaml] $YAML"
-grep -E "lora_rank|learning_rate|quantization|per_device_train_batch_size|gradient_accumulation_steps|output_dir|swanlab_run_name" $YAML
+grep -E "lora_rank|learning_rate|quantization|per_device_train_batch_size|gradient_accumulation_steps|output_dir|swanlab_run_name" "$YAML"

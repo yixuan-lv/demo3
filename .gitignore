@@ -1,4 +1,4 @@
-# 大文件 / 中间产物
+# 中间产物
 exp/
 output/
 bc2gm1/
@@ -9,7 +9,7 @@ bc2gm1/
 *.bin
 *.pt
 
-# 数据（从官方下载）
+# 处理后的数据
 data/*.json
 
 # 缓存
@@ -18,5 +18,5 @@ __pycache__/
 .cache/
 .ipynb_checkpoints/
 
-# 系统
+# 系统文件
 .DS_Store
