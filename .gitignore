@@ -11,6 +11,8 @@ bc2gm1/
 
 # 处理后的数据
 data/*.json
+results/*.jsonl
+results/predictions/
 
 # 缓存
 __pycache__/

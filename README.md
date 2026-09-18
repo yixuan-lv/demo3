@@ -35,13 +35,13 @@
 | 要求 | 当前实现 |
 |---|---|
 | 数据预处理 | `data/build_dataset.py` 将 BC2GM 转成指令数据 |
-| 模型与训练 | Qwen2.5-7B + LoRA/QLoRA，训练参数由 YAML 管理 |
+| 模型与训练 | Qwen2.5-7B + LoRA/QLoRA，使用 PyTorch 手写训练循环 |
 | 模型评估 | 解析 `<gene>` 标签并计算 entity-level P/R/F1 |
 | 结果可视化 | 保存 loss 曲线、参数趋势图和结果表 |
-| SwanLab | 已记录 6 组训练实验 |
+| SwanLab | 手写训练循环记录 loss、学习率、验证 loss 和显存峰值 |
 | 参数调优 | 对比 rank、学习率和量化方式 |
 
-训练部分调用 LLaMA-Factory，没有另外重写一套 PyTorch 训练循环。这样可以保证仓库中的代码和已经完成的实验一致。如果验收明确要求手写训练循环，这一项还需要单独补充。
+`src/trainer.py` 直接实现 DataLoader、梯度累积、AdamW、学习率调度、验证与 checkpoint 保存，没有调用 Hugging Face Trainer 或 LLaMA-Factory。`scripts/run_all.py` 使用同一套训练循环依次完成 6 组对比实验。
 
 ---
 
@@ -74,8 +74,9 @@
 - **两种微调方案**：
   - **LoRA（BF16）**：全精度基座 + LoRA 适配器，不量化
   - **QLoRA（4-bit）**：4-bit NF4 量化基座 + LoRA 适配器
-- **LoRA 配置**：`lora_rank=16`，`lora_target=all`
-- **训练框架**：LLaMA-Factory
+- **LoRA 配置**：`rank=16`，`alpha=32`，`dropout=0.05`，目标层为 Q/K/V/O 和 FFN 投影层
+- **训练实现**：PyTorch + Transformers + PEFT，自定义训练循环
+- **历史实验**：原始结果使用 LLaMA-Factory 完成，单独保存在 `results/legacy/`
 - **可视化**：SwanLab
 
 ---
@@ -87,6 +88,8 @@
 | 基座 | Qwen2.5-7B-Instruct | Qwen2.5-7B-Instruct |
 | 量化 | 无 | 4-bit bnb (NF4) |
 | lora_rank | 16 | 16 |
+| lora_alpha | 32 | 32 |
+| lora_dropout | 0.05 | 0.05 |
 | lora_target | all | all |
 | per_device_train_batch_size | 2 | 4 |
 | gradient_accumulation_steps | 8 | 4 |
@@ -122,6 +125,8 @@
 
 ## 方案对比：LoRA vs QLoRA
 
+下面的数值和图片来自整理代码前已经完成的 LLaMA-Factory 实验，仅作为历史参考。手写训练循环沿用相同的数据、prompt 和主要超参数，但需要重新训练后才能得到对应结果。
+
 在相同基座、相同 LoRA 配置（rank16 / all target）、相同 batch（等效 16）、相同 lr（5e-5）、相同 epoch（3）下，只改变**是否 4-bit 量化**，对比结果：
 
 | 方案 | 量化 | Precision | Recall | F1 | 训练显存 |
@@ -135,7 +140,7 @@
 - 两者 F1 相差 0.0016，QLoRA 的性能损失较小
 - 训练时长：LoRA 约 70 分钟，QLoRA 约 50 分钟
 
-![quant compare](results/fig_quant_compare.png)
+![quant compare](results/legacy/fig_quant_compare.png)
 
 ### 与参考指标对比
 
@@ -175,7 +180,7 @@
 
 **显存趋势**：rank 8 ≈ rank 16（均 25.9G），rank 32 涨到 29.1G。原因是 rank ≤ 16 时显存瓶颈在激活值，rank = 32 时 LoRA 参数与优化器状态开始显著占用显存。
 
-![rank vs F1](results/fig_rank_f1.png)
+![rank vs F1](results/legacy/fig_rank_f1.png)
 
 ### 2. 学习率对 F1 的影响（QLoRA）
 
@@ -189,13 +194,13 @@
 
 **显存趋势**：三个实验训练显存完全一致（25.9G），证实**学习率不影响显存**。
 
-![lr vs F1](results/fig_lr_f1.png)
+![lr vs F1](results/legacy/fig_lr_f1.png)
 
 ### 训练 loss 曲线
 
-![train loss](results/training_loss.png)
+![train loss](results/legacy/training_loss.png)
 
-![eval loss](results/training_eval_loss.png)
+![eval loss](results/legacy/training_eval_loss.png)
 
 ---
 
@@ -238,29 +243,47 @@ python data/build_dataset.py --input /path/to/bc2gm --output data/
 ### 训练
 
 ```bash
-# QLoRA（默认）
-python scripts/train.py --config qlora.yaml
+# 手写 PyTorch 训练循环，默认运行 QLoRA
+python scripts/train.py --config qlora.json
+
+# LoRA
+python scripts/train.py --config lora.json
 ```
 
 ### 推理 + 评测
 
 ```bash
-# 1. 在 test 集上生成预测
-python scripts/predict.py --config predict_qlora.yaml
+# 1. 单句预测
+python scripts/predict.py --config predict_custom.json \
+  --text "Phenotypic analysis demonstrates that trio and Abl cooperate."
 
-# 2. 计算 entity-level F1
+# 2. 对 test 集生成预测
+python scripts/predict.py --config predict_custom.json \
+  --input data/bc2gm_test.json \
+  --output results/custom_predictions.jsonl
+
+# 3. 计算 entity-level F1
 python scripts/evaluate.py \
-  --pred results/predict/generated_predictions.jsonl \
+  --pred results/custom_predictions.jsonl \
   --gold data/bc2gm_test.json
 ```
 
 ### 批量参数实验
 
+下面的命令会使用手写训练循环依次训练 6 组实验，并重新生成预测、指标 CSV 和趋势图：
+
 ```bash
-bash scripts/run_all.sh
+# 建议先只跑 baseline，确认显存和流程
+python scripts/run_all.py --experiments baseline
+
+# baseline 正常后再跑其余 5 组
+python scripts/run_all.py --experiments rank8 rank32 lr1e5 lr1e4 lora
+
+# 也可以一次运行全部实验
+python scripts/run_all.py
 ```
 
-自动跑 rank / lr / 量化共 5 组实验，结果写入 `results/results.csv`，并生成趋势图。
+运行时间较长。脚本会跑 QLoRA baseline、rank 8、rank 32、lr 1e-5、lr 1e-4 和 LoRA，结果写入 `results/results.csv`。
 
 ---
 
@@ -271,10 +294,9 @@ demo3/
 ├── README.md
 ├── requirements.txt
 ├── configs/
-│   ├── lora.yaml
-│   ├── qlora.yaml
-│   ├── train_qlora.yaml  # 原训练配置，保留兼容
-│   └── predict_qlora.yaml
+│   ├── lora.json               # 手写 LoRA 训练配置
+│   ├── qlora.json              # 手写 QLoRA 训练配置
+│   └── predict_custom.json     # 手写推理配置
 ├── data/
 │   ├── build_dataset.py
 │   └── bc2gm_{train,dev,test}.json  # 不提交到 Git
@@ -291,17 +313,10 @@ demo3/
 │   ├── evaluate.py
 │   ├── predict.py
 │   ├── eval_f1_strict.py
-│   ├── run_one.sh
-│   ├── run_all.sh
-│   ├── gen_yaml.sh
+│   ├── run_all.py
 │   └── plot.py
 └── results/
-    ├── results.csv
-    ├── fig_rank_f1.png
-    ├── fig_lr_f1.png
-    ├── fig_quant_compare.png
-    ├── training_loss.png
-    └── training_eval_loss.png
+    └── legacy/                 # 原 LLaMA-Factory 实验结果
 ```
 
 ---
@@ -324,6 +339,8 @@ SwanLab 项目：[qwen2.5-ner](https://swanlab.cn/@Lyx1/qwen2.5-ner)
 ## 参考
 
 - [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory)
+- [03Qwen2.5-7B-BC2GM_NER](https://github.com/rice-cpu/03Qwen2.5-7B-BC2GM_NER)
+- [Demo-3](https://github.com/Username2078/Demo-3)
 - [BC2GM Dataset](https://biocreative.bioinformatics.udel.edu/)
 - [Qwen2.5](https://github.com/QwenLM/Qwen2.5)
 - [SwanLab](https://swanlab.cn/)

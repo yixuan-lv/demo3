@@ -1,4 +1,61 @@
 import csv
+from pathlib import Path
+
+_run = None
+
+
+def start_run(config):
+    global _run
+    if not config.get("use_swanlab", True):
+        return
+    import swanlab
+    _run = swanlab.init(
+        project=config.get("swanlab_project", "qwen2.5-ner"),
+        experiment_name=config.get("swanlab_run_name", "custom-trainer"),
+        mode=config.get("swanlab_mode", "cloud"),
+        config=config,
+    )
+
+
+def log_metrics(values, step):
+    if _run is None:
+        return
+    import swanlab
+    swanlab.log(values, step=step)
+
+
+def finish_run():
+    if _run is None:
+        return
+    import swanlab
+    swanlab.finish()
+
+
+def plot_training_history(history, output_dir):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if history["train_loss"]:
+        steps, losses = zip(*history["train_loss"])
+        plt.figure(figsize=(7, 4))
+        plt.plot(steps, losses)
+        plt.xlabel("Step")
+        plt.ylabel("Loss")
+        plt.tight_layout()
+        plt.savefig(output_dir / "training_loss.png", dpi=150)
+        plt.close()
+    if history["eval_loss"]:
+        steps, losses = zip(*history["eval_loss"])
+        plt.figure(figsize=(7, 4))
+        plt.plot(steps, losses, marker="o")
+        plt.xlabel("Step")
+        plt.ylabel("Eval loss")
+        plt.tight_layout()
+        plt.savefig(output_dir / "training_eval_loss.png", dpi=150)
+        plt.close()
 
 def load_results(csv_file):
     with csv_file.open(newline="", encoding="utf-8") as handle:
@@ -51,10 +108,15 @@ def plot_results(csv_file, output_dir):
     for i, value in enumerate(f1_values):
         ax1.text(i, value + 0.002, f"{value:.4f}", ha="center")
     ax2 = ax1.twinx()
-    memory = [25.9, 27.8]
+    memory = [
+        float(data["baseline"].get("peak_memory_gb", 25.9)),
+        float(data["lora"].get("peak_memory_gb", 27.8)),
+    ]
     ax2.plot([0, 1], memory, "D--", color="green", markersize=8)
     ax2.set_ylabel("GPU Memory (GB)", color="green")
     ax2.tick_params(axis="y", labelcolor="green")
+    for i, value in enumerate(memory):
+        ax2.text(i, value + 0.3, f"{value:.1f}G", ha="center", color="green")
     plt.title("QLoRA vs LoRA: F1 & GPU Memory")
     plt.tight_layout()
     plt.savefig(output_dir / "fig_quant_compare.png", dpi=150)

@@ -1,0 +1,12 @@
+{
+  "model_name_or_path": "/root/models/Qwen2.5-7B-Instruct",
+  "adapter_name_or_path": "/root/autodl-tmp/demo3/output_custom/qwen2.5-7b-qlora",
+  "trust_remote_code": true,
+  "quantization_bit": 4,
+  "quantization_type": "nf4",
+  "double_quant": true,
+  "bf16": true,
+  "cutoff_len": 1024,
+  "max_new_tokens": 512,
+  "do_sample": false
+}
