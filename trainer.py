@@ -1,6 +1,5 @@
 import json
 import math
-import random
 import shutil
 import time
 from pathlib import Path
@@ -10,16 +9,39 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import get_scheduler
 
-from src.config import dataset_path, load_config
-from src.dataset import DataCollator, NERDataset
-from src.model import build_model
-from src.visualization import finish_run, log_metrics, plot_training_history, start_run
+from dataset import DataCollator, NERDataset
+from model import build_model
+from plot import plot_training_history
+from utils import dataset_path, load_config, set_seed
+
+_run = None
 
 
-def set_seed(seed):
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+def start_run(config):
+    global _run
+    if not config.get("use_swanlab", True):
+        return
+    import swanlab
+    _run = swanlab.init(
+        project=config.get("swanlab_project", "qwen2.5-ner"),
+        experiment_name=config.get("swanlab_run_name", "custom-trainer"),
+        mode=config.get("swanlab_mode", "cloud"),
+        config=config,
+    )
+
+
+def log_metrics(values, step):
+    if _run is None:
+        return
+    import swanlab
+    swanlab.log(values, step=step)
+
+
+def finish_run():
+    if _run is None:
+        return
+    import swanlab
+    swanlab.finish()
 
 
 class NERTrainer:

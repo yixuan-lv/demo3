@@ -4,9 +4,9 @@ from pathlib import Path
 import torch
 from tqdm.auto import tqdm
 
-from src.config import load_config
-from src.dataset import INSTRUCTION, build_messages
-from src.model import load_adapter
+from dataset import INSTRUCTION, build_messages
+from model import load_adapter
+from utils import load_config
 
 
 def predict_sentence(model, tokenizer, sentence, config):

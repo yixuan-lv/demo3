@@ -6,11 +6,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from src.metrics import evaluate
-from src.visualization import plot_results
+from metrics import evaluate
+from plot import plot_results
 
 
 def read_json(path):
@@ -41,7 +41,7 @@ def read_results():
 
 qlora = read_json(ROOT / "configs" / "qlora.json")
 lora = read_json(ROOT / "configs" / "lora.json")
-predict_config = read_json(ROOT / "configs" / "predict_custom.json")
+predict_config = read_json(ROOT / "configs" / "predict.json")
 output_root = Path(qlora["output_dir"]).parent
 prediction_dir = ROOT / "results" / "predictions"
 test_file = ROOT / "data" / "bc2gm_test.json"
@@ -74,7 +74,7 @@ def main():
             train_file.write_text(json.dumps(train_config, indent=2), encoding="utf-8")
 
             subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / "train.py"), "--config", str(train_file)],
+                [sys.executable, str(ROOT / "main.py"), "train", "--config", str(train_file)],
                 check=True,
             )
 
@@ -88,7 +88,8 @@ def main():
             subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "scripts" / "predict.py"),
+                    str(ROOT / "main.py"),
+                    "predict",
                     "--config", str(predict_file),
                     "--input", str(test_file),
                     "--output", str(prediction_file),

@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.dataset import convert_split
+from dataset import convert_split
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input", type=Path, default=ROOT / "bc2gm1")

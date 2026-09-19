@@ -1,34 +1,8 @@
+import argparse
 import csv
 from pathlib import Path
 
-_run = None
-
-
-def start_run(config):
-    global _run
-    if not config.get("use_swanlab", True):
-        return
-    import swanlab
-    _run = swanlab.init(
-        project=config.get("swanlab_project", "qwen2.5-ner"),
-        experiment_name=config.get("swanlab_run_name", "custom-trainer"),
-        mode=config.get("swanlab_mode", "cloud"),
-        config=config,
-    )
-
-
-def log_metrics(values, step):
-    if _run is None:
-        return
-    import swanlab
-    swanlab.log(values, step=step)
-
-
-def finish_run():
-    if _run is None:
-        return
-    import swanlab
-    swanlab.finish()
+ROOT = Path(__file__).resolve().parent
 
 
 def plot_training_history(history, output_dir):
@@ -121,3 +95,17 @@ def plot_results(csv_file, output_dir):
     plt.tight_layout()
     plt.savefig(output_dir / "fig_quant_compare.png", dpi=150)
     plt.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, default=ROOT / "results" / "results.csv")
+    parser.add_argument("--output", type=Path, default=ROOT / "results")
+    args = parser.parse_args()
+
+    plot_results(args.csv, args.output)
+    print(f"Saved figures to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

@@ -50,12 +50,14 @@
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| 数据预处理 | `src/dataset.py` | bc2gm → instruction 格式，构造 prompt/label，动态 padding |
-| 模型设计 | `src/model.py` | 加载 Qwen2.5-7B + 4-bit 量化 + 注入 LoRA |
-| 训练 | `src/trainer.py` | 自定义训练循环 + cosine 调度 + 梯度累积 + 梯度检查点 |
-| 评估 | `src/metrics.py` | 解析 `<gene>` 标签，entity-level P/R/F1 |
-| 推理 | `src/predict.py` | 批量生成 + 交互式单句 NER |
-| 可视化 | `src/visualization.py` | SwanLab 封装 + 趋势图绘制 |
+| 统一入口 | `main.py` | 训练、评估与推理命令 |
+| 数据预处理 | `dataset.py` | bc2gm → instruction 格式，构造 prompt/label，动态 padding |
+| 模型设计 | `model.py` | 加载 Qwen2.5-7B + 4-bit 量化 + 注入 LoRA |
+| 训练 | `trainer.py` | 自定义训练循环 + cosine 调度 + 梯度累积 + SwanLab 记录 |
+| 评估 | `metrics.py` | 解析 `<gene>` 标签，entity-level P/R/F1 |
+| 推理 | `predict.py` | 批量生成 + 交互式单句 NER |
+| 通用工具 | `utils.py` | 配置读取、项目路径与随机种子 |
+| 可视化 | `plot.py` | 训练曲线与实验趋势图绘制 |
 
 ### 3.3 训练配置
 
@@ -203,21 +205,18 @@ demo3/
 ├── configs/
 │   ├── qlora.json              # QLoRA 训练配置
 │   ├── lora.json               # LoRA (BF16) 训练配置
-│   └── predict_custom.json     # 推理配置
+│   └── predict.json            # 推理配置
 ├── data/
 │   └── build_dataset.py        # bc2gm → instruction 格式转换
-├── src/
-│   ├── config.py               # 配置加载
-│   ├── dataset.py              # 数据集 + 动态 padding
-│   ├── model.py                # 模型加载 + LoRA 注入
-│   ├── trainer.py              # 训练循环
-│   ├── metrics.py              # 实体解析 + P/R/F1
-│   ├── predict.py              # 批量/交互式推理
-│   └── visualization.py        # SwanLab + 趋势图
-├── scripts/
-│   ├── train.py                # 训练入口
-│   ├── predict.py              # 推理入口
-│   └── run_all.py              # 批量实验
+├── main.py                     # 训练/评估/推理统一入口
+├── run_all.py                  # 6 组批量实验
+├── model.py                    # 模型加载 + LoRA 注入
+├── dataset.py                  # 数据集 + 动态 padding
+├── trainer.py                  # 训练循环 + SwanLab 记录
+├── predict.py                  # 批量/交互式推理
+├── metrics.py                  # 两种口径的 P/R/F1
+├── utils.py                    # 配置、路径与随机种子
+├── plot.py                     # 训练曲线与实验趋势图
 └── results/
     ├── results.csv             # 6 个实验汇总
     ├── fig_rank_f1.png
@@ -247,28 +246,30 @@ python data/build_dataset.py --input /path/to/bc2gm --output data/
 
 ```bash
 # QLoRA
-python scripts/train.py --config configs/qlora.json
+python main.py train --config qlora.json
 
 # LoRA (BF16)
-python scripts/train.py --config configs/lora.json
+python main.py train --config lora.json
 ```
 
 ### 推理 + 评测
 
 ```bash
-python scripts/predict.py \
-  --config configs/predict_custom.json \
+python main.py predict \
+  --config predict.json \
   --input data/bc2gm_test.json \
   --output results/predictions/baseline.jsonl \
   --batch-size 8
 
-python -c "from src.metrics import evaluate; print(evaluate('results/predictions/baseline.jsonl', 'data/bc2gm_test.json'))"
+python main.py eval \
+  --pred results/predictions/baseline.jsonl \
+  --gold data/bc2gm_test.json
 ```
 
 ### 批量参数实验
 
 ```bash
-python scripts/run_all.py --experiments baseline rank8 rank32 lr1e5 lr1e4 lora
+python run_all.py --experiments baseline rank8 rank32 lr1e5 lr1e4 lora
 ```
 
 ---
