@@ -57,19 +57,28 @@ class NERDataset(Dataset):
 
     def __getitem__(self, index):
         example = self.data[index]
+
+        # 只含 prompt（不带答案），用于计算 prompt 长度
         prompt_ids = self.tokenizer.apply_chat_template(
             build_messages(example, with_answer=False),
             tokenize=True,
             add_generation_prompt=True,
-        )
+        ).input_ids
+
+        # 完整对话（含答案），作为训练输入
         input_ids = self.tokenizer.apply_chat_template(
             build_messages(example),
             tokenize=True,
             add_generation_prompt=False,
-        )
-        input_ids = input_ids[:self.max_length]
+        ).input_ids
+
+        # 截断
+        input_ids = input_ids[: self.max_length]
         prompt_length = min(len(prompt_ids), len(input_ids))
+
+        # 只在 assistant 输出部分算 loss，prompt 部分屏蔽为 -100
         labels = [-100] * prompt_length + input_ids[prompt_length:]
+
         return {"input_ids": input_ids, "labels": labels}
 
 
